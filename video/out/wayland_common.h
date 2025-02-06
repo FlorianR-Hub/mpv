@@ -27,6 +27,7 @@
 struct compositor_format;
 struct vo_wayland_seat;
 struct vo_wayland_tranche;
+struct vo_wayland_data_offer;
 
 struct drm_format {
     uint32_t format;
@@ -120,6 +121,9 @@ struct vo_wayland_state {
     struct zwp_idle_inhibit_manager_v1 *idle_inhibit_manager;
     struct zwp_idle_inhibitor_v1 *idle_inhibitor;
 
+    /* text-input */
+    struct zwp_text_input_manager_v3 *text_input_manager;
+
     /* linux-dmabuf */
     struct wl_list tranche_list;
     struct vo_wayland_tranche *current_tranche;
@@ -160,13 +164,9 @@ struct vo_wayland_state {
     struct wl_list seat_list;
     struct xkb_context *xkb_context;
 
-    /* DND */
-    struct wl_data_device_manager *dnd_devman;
-    struct wl_data_offer *dnd_offer;
-    int dnd_action; // actually enum mp_dnd_action
-    char *dnd_mime_type;
-    int dnd_fd;
-    int dnd_mime_score;
+    /* Data offer */
+    struct wl_data_device_manager *devman;
+    bstr selection_text;
 
     /* Cursor */
     struct wl_cursor_theme *cursor_theme;
