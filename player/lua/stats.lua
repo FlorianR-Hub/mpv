@@ -131,6 +131,15 @@ local cache_ahead_buf, cache_speed_buf
 local perf_buffers = {}
 local process_key_binding
 
+local property_cache = {}
+
+local function get_property_cached(name, def)
+    if property_cache[name] ~= nil then
+        return property_cache[name]
+    end
+    return def
+end
+
 local function graph_add_value(graph, value)
     graph.pos = (graph.pos % graph.len) + 1
     graph[graph.pos] = value
@@ -909,8 +918,9 @@ local function add_video_out(s)
 
     append(s, "", {prefix="Display:", nl=o.nl .. o.nl, indent=""})
     append(s, vo, {prefix_sep="", nl="", indent=""})
-    append_property(s, "display-names", {prefix_sep="", prefix="(", suffix=")",
-                                         no_prefix_markup=true, nl="", indent=" "})
+
+    append(s, get_property_cached("display-names"), {prefix_sep="", prefix="(", suffix=")",
+           no_prefix_markup=true, nl="", indent=" "})
     append(s, mp.get_property_native("current-gpu-context"),
            {prefix="Context:", nl="", indent=o.prefix_sep .. o.prefix_sep})
     append_property(s, "avsync", {prefix="A-V:"})
@@ -928,7 +938,7 @@ local function add_video_out(s)
 
     local scale = nil
     if not mp.get_property_native("fullscreen") then
-        scale = mp.get_property_native("current-window-scale")
+        scale = get_property_cached("current-window-scale")
     end
 
     local od = mp.get_property_native("osd-dimensions")
@@ -975,9 +985,9 @@ local function add_video(s)
             append(s, track["decoder"], {prefix="[", nl="", indent=" ", prefix_sep="",
                    no_prefix_markup=true, suffix="]"})
         end
-        append_property(s, "hwdec-current", {prefix="HW:", nl="",
-                        indent=o.prefix_sep .. o.prefix_sep,
-                        no_prefix_markup=false, suffix=""}, {no=true, [""]=true})
+        append(s, get_property_cached("hwdec-current"), {prefix="HW:", nl="",
+               indent=o.prefix_sep .. o.prefix_sep,
+               no_prefix_markup=false, suffix=""}, {no=true, [""]=true})
     end
     local has_prefix = false
     if o.show_frame_info then
@@ -1431,12 +1441,12 @@ cache_recorder_timer:kill()
 -- Current page and <page key>:<page function> mapping
 curr_page = o.key_page_1
 pages = {
-    [o.key_page_1] = { f = default_stats, desc = "Default" },
-    [o.key_page_2] = { f = vo_stats, desc = "Extended Frame Timings", scroll = true },
-    [o.key_page_3] = { f = cache_stats, desc = "Cache Statistics" },
-    [o.key_page_4] = { f = keybinding_info, desc = "Active Key Bindings", scroll = true },
-    [o.key_page_5] = { f = track_info, desc = "Selected Tracks Info", scroll = true },
-    [o.key_page_0] = { f = perf_stats, desc = "Internal Performance Info", scroll = true },
+    [o.key_page_1] = { idx = 1, f = default_stats, desc = "Default" },
+    [o.key_page_2] = { idx = 2, f = vo_stats, desc = "Extended Frame Timings", scroll = true },
+    [o.key_page_3] = { idx = 3, f = cache_stats, desc = "Cache Statistics" },
+    [o.key_page_4] = { idx = 4, f = keybinding_info, desc = "Active Key Bindings", scroll = true },
+    [o.key_page_5] = { idx = 5, f = track_info, desc = "Selected Tracks Info", scroll = true },
+    [o.key_page_0] = { idx = 0, f = perf_stats, desc = "Internal Performance Info", scroll = true },
 }
 
 
@@ -1562,7 +1572,6 @@ local function filter_bindings()
                 display_timer:resume()
             end
         end,
-        submit = input.terminate,
         closed = function ()
             searched_text = nil
             if display_timer:is_enabled() then
@@ -1721,20 +1730,20 @@ mp.add_key_binding(nil, "display-stats", function() process_key_binding(true) en
 mp.add_key_binding(nil, "display-stats-toggle", function() process_key_binding(false) end,
     {repeatable=false})
 
-for k, _ in pairs(pages) do
+for k, page in pairs(pages) do
     -- Single invocation key bindings for specific pages, e.g.:
     -- "e script-binding stats/display-page-2"
-    mp.add_key_binding(nil, "display-page-" .. k, function()
+    mp.add_key_binding(nil, "display-page-" .. page.idx, function()
         curr_page = k
         process_key_binding(true)
     end, {repeatable=true})
 
     -- Key bindings to toggle a specific page, e.g.:
     -- "h script-binding stats/display-page-4-toggle".
-    mp.add_key_binding(nil, "display-page-" .. k .. "-toggle", function()
+    mp.add_key_binding(nil, "display-page-" .. page.idx .. "-toggle", function()
         curr_page = k
         process_key_binding(false)
-    end, {repeatable=true})
+    end, {repeatable=false})
 end
 
 -- Reprint stats immediately when VO was reconfigured, only when toggled
@@ -1771,3 +1780,11 @@ end
 
 mp.observe_property("osd-height", "native", update_scale)
 mp.observe_property("osd-scale-by-window", "native", update_scale)
+
+local function update_property_cache(name, value)
+    property_cache[name] = value
+end
+
+mp.observe_property('current-window-scale', 'native', update_property_cache)
+mp.observe_property('display-names', 'string', update_property_cache)
+mp.observe_property('hwdec-current', 'string', update_property_cache)

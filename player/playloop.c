@@ -108,17 +108,26 @@ void mp_core_unlock(struct MPContext *mpctx)
 // Process any queued user input.
 static void mp_process_input(struct MPContext *mpctx)
 {
-    int processed = 0;
+    bool notify = false;
     for (;;) {
         mp_cmd_t *cmd = mp_input_read_cmd(mpctx->input);
         if (!cmd)
             break;
+        if (cmd->notify_event)
+            notify = true;
         run_command(mpctx, cmd, NULL, NULL, NULL);
-        processed = 1;
     }
     mp_set_timeout(mpctx, mp_input_get_delay(mpctx->input));
-    if (processed)
+    if (notify)
         mp_notify(mpctx, MP_EVENT_INPUT_PROCESSED, NULL);
+}
+
+// Process any queued option callbacks.
+void handle_option_callbacks(struct MPContext *mpctx)
+{
+    for (int i = 0; i < mpctx->num_option_callbacks; i++)
+        mp_option_run_callback(mpctx, &mpctx->option_callbacks[i]);
+    mpctx->num_option_callbacks = 0;
 }
 
 double get_relative_time(struct MPContext *mpctx)
@@ -216,6 +225,15 @@ void add_step_frame(struct MPContext *mpctx, int dir, bool use_seek)
             set_pause_state(mpctx, true);
         }
     }
+}
+
+void step_frame_mute(struct MPContext *mpctx, bool mute)
+{
+    if (!mpctx->ao_chain || !mpctx->ao_chain->ao)
+        return;
+
+    float gain = mute ? 0 : audio_get_gain(mpctx);
+    ao_set_gain(mpctx->ao_chain->ao, gain);
 }
 
 // Clear some playback-related fields on file loading or after seeks.
@@ -1289,6 +1307,8 @@ void run_playloop(struct MPContext *mpctx)
 
     mp_process_input(mpctx);
 
+    handle_option_callbacks(mpctx);
+
     handle_chapter_change(mpctx);
 
     handle_force_window(mpctx, false);
@@ -1300,6 +1320,7 @@ void mp_idle(struct MPContext *mpctx)
     handle_clipboard_updates(mpctx);
     mp_wait_events(mpctx);
     mp_process_input(mpctx);
+    handle_option_callbacks(mpctx);
     handle_command_updates(mpctx);
     handle_update_cache(mpctx);
     handle_cursor_autohide(mpctx);

@@ -303,8 +303,8 @@ static int preinit(struct vo *vo)
     talloc_free(ctx_opts);
     if (!p->ctx)
         goto err_out;
-    assert(p->ctx->ra);
-    assert(p->ctx->swapchain);
+    mp_assert(p->ctx->ra);
+    mp_assert(p->ctx->swapchain);
 
     p->renderer = gl_video_init(p->ctx->ra, vo->log, vo->global);
     gl_video_set_osd_source(p->renderer, vo->osd);
@@ -327,7 +327,7 @@ err_out:
 const struct vo_driver video_out_gpu = {
     .description = "Shader-based GPU Renderer",
     .name = "gpu",
-    .caps = VO_CAP_ROTATE90,
+    .caps = VO_CAP_ROTATE90 | VO_CAP_VFLIP,
     .preinit = preinit,
     .query_format = query_format,
     .reconfig = reconfig,

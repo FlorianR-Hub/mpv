@@ -147,6 +147,7 @@ struct format_hack {
     bool no_seek_on_no_duration : 1;
     bool readall_on_no_streamseek : 1;
     bool first_frame_only : 1;
+    bool no_ext_picky : 1;      // set "extension_picky" to false
 };
 
 #define BLACKLIST(fmt) {fmt, .ignore = true}
@@ -162,7 +163,7 @@ static const struct format_hack format_hacks[] = {
     {"mp3", "audio/mpeg", 24, 0.5},
     {"mp3", NULL,         24, .max_probe = true},
 
-    {"hls", .no_stream = true, .clear_filepos = true},
+    {"hls", .no_stream = true, .clear_filepos = true, .no_ext_picky = true},
     {"dash", .no_stream = true, .clear_filepos = true},
     {"sdp", .clear_filepos = true, .is_network = true, .no_seek = true},
     {"mpeg", .use_stream_ids = true},
@@ -225,6 +226,7 @@ struct stream_info {
 typedef struct lavf_priv {
     struct stream *stream;
     bool own_stream;
+    bool is_dvd_bd;
     char *filename;
     struct format_hack format_hack;
     const AVInputFormat *avif;
@@ -332,9 +334,14 @@ static int64_t mp_seek(void *opaque, int64_t pos, int whence)
         return -1;
 
     int64_t current_pos = stream_tell(stream);
-    if (stream_seek(stream, pos) == 0) {
-        stream_seek(stream, current_pos);
-        return -1;
+    if (!priv->is_dvd_bd) {
+        if (stream_seek(stream, pos) == 0) {
+            stream_seek(stream, current_pos);
+            return -1;
+        }
+    } else {
+        stream_drop_buffers(stream);
+        stream->pos = current_pos;
     }
 
     return pos;
@@ -438,7 +445,7 @@ static int lavf_check_file(demuxer_t *demuxer, enum demux_check check)
 
     const AVInputFormat *forced_format = NULL;
     const char *format = lavfdopts->format;
-    if (!format)
+    if (!format || !format[0])
         format = s->lavf_type;
     if (!format)
         format = avdevice_format;
@@ -643,7 +650,7 @@ static void export_replaygain(demuxer_t *demuxer, struct sh_stream *sh,
 
     // This must be run only before the stream was added, otherwise there
     // will be race conditions with accesses from the user thread.
-    assert(!sh->ds);
+    mp_assert(!sh->ds);
     sh->codec->replaygain_data = rgain;
 }
 
@@ -808,7 +815,7 @@ static void handle_new_stream(demuxer_t *demuxer, int i)
         .last_key_pts = MP_NOPTS_VALUE,
         .highest_pts = MP_NOPTS_VALUE,
     };
-    assert(priv->num_streams == i); // directly mapped
+    mp_assert(priv->num_streams == i); // directly mapped
     MP_TARRAY_APPEND(priv, priv->streams, priv->num_streams, info);
 
     if (sh) {
@@ -999,6 +1006,18 @@ static int demux_open_lavf(demuxer_t *demuxer, enum demux_check check)
                    "analyzeduration to %f\n", analyze_duration);
     }
 
+    if (priv->format_hack.no_ext_picky) {
+        bool user_set_ext_picky = false;
+        for (int i = 0; lavfdopts->avopts && lavfdopts->avopts[i * 2]; i++) {
+            if (bstr_startswith0(bstr0(lavfdopts->avopts[i * 2]), "extension_picky")) {
+                user_set_ext_picky = true;
+                break;
+            }
+        }
+        if (!user_set_ext_picky && av_dict_set(&dopts, "extension_picky", "0", 0) >= 0)
+            MP_VERBOSE(demuxer, "Option extension_picky=0 was set due to known FFmpeg bugs\n");
+    }
+
     if ((priv->avif_flags & AVFMT_NOFILE) || priv->format_hack.no_stream) {
         mp_setup_av_network_options(&dopts, priv->avif->name,
                                     demuxer->global, demuxer->log);
@@ -1171,6 +1190,15 @@ static int demux_open_lavf(demuxer_t *demuxer, enum demux_check check)
         priv->stream = NULL;
     }
 
+    if (priv->stream) {
+        const char *sname = priv->stream->info->name;
+        priv->is_dvd_bd = strcmp(sname, "dvdnav") == 0 ||
+                          strcmp(sname, "ifo_dvdnav") == 0 ||
+                          strcmp(sname, "bd") == 0 ||
+                          strcmp(sname, "bdnav") == 0 ||
+                          strcmp(sname, "bdmv/bluray") == 0;
+    }
+
     return 0;
 
 fail:
@@ -1206,7 +1234,7 @@ static bool demux_lavf_read_packet(struct demuxer *demux,
     add_new_streams(demux);
     update_metadata(demux);
 
-    assert(pkt->stream_index >= 0 && pkt->stream_index < priv->num_streams);
+    mp_assert(pkt->stream_index >= 0 && pkt->stream_index < priv->num_streams);
     struct stream_info *info = priv->streams[pkt->stream_index];
     struct sh_stream *stream = info->sh;
     AVStream *st = priv->avfc->streams[pkt->stream_index];
@@ -1277,6 +1305,16 @@ static bool demux_lavf_read_packet(struct demuxer *demux,
 
     *mp_pkt = dp;
     return true;
+}
+
+static void demux_drop_buffers_lavf(demuxer_t *demuxer)
+{
+    lavf_priv_t *priv = demuxer->priv;
+    av_seek_frame(priv->avfc, -1, 0, 1);
+    demux_flush(demuxer);
+    stream_drop_buffers(priv->stream);
+    avio_flush(priv->avfc->pb);
+    avformat_flush(priv->avfc);
 }
 
 static void demux_seek_lavf(demuxer_t *demuxer, double seek_pts, int flags)
@@ -1409,6 +1447,7 @@ const demuxer_desc_t demuxer_desc_lavf = {
     .desc = "libavformat",
     .read_packet = demux_lavf_read_packet,
     .open = demux_open_lavf,
+    .drop_buffers = demux_drop_buffers_lavf,
     .close = demux_close_lavf,
     .seek = demux_seek_lavf,
     .switched_tracks = demux_lavf_switched_tracks,

@@ -18,7 +18,6 @@
 #ifndef MPLAYER_MPCOMMON_H
 #define MPLAYER_MPCOMMON_H
 
-#include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -31,6 +30,7 @@
 #include <unistd.h>
 #endif
 
+#include "misc/mp_assert.h"
 #include "osdep/compiler.h"
 #include "mpv_talloc.h"
 
@@ -89,6 +89,14 @@ enum video_sync {
     VS_DISP_VDROP,
     VS_DISP_NONE,
     VS_NONE,
+};
+
+enum track_flags {
+    // starts at 4, for cmd_track_add backwards compatibility
+    TRACK_HEARING_IMPAIRED = 1 << 2,
+    TRACK_VISUAL_IMPAIRED = 1 << 3,
+    TRACK_ATTACHED_PICTURE = 1 << 4,
+    TRACK_FORCED = 1 << 5,
 };
 
 #define VS_IS_DISP(x) ((x) == VS_DISP_RESAMPLE ||       \
@@ -167,7 +175,6 @@ char **mp_dup_str_array(void *tctx, char **s);
 // kill the process even with NDEBUG.
 #define MP_HANDLE_OOM(x) do {   \
         void *oom_p_ = (x);     \
-        assert(oom_p_);         \
         if (!oom_p_)            \
             abort();            \
     } while (0)

@@ -15,10 +15,13 @@
  * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <libavutil/hwcontext_drm.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include "config.h"
+
+#if HAVE_DRM
+#include <libavutil/hwcontext_drm.h>
+#endif
 
 #if HAVE_VAAPI
 #include <va/va_drmcommon.h>
@@ -221,30 +224,37 @@ done:
 static uintptr_t drmprime_surface_id(struct mp_image *src)
 {
     uintptr_t id = 0;
+#if HAVE_DRM
     struct AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)src->planes[0];
 
     AVDRMObjectDescriptor object = desc->objects[0];
     id = (uintptr_t)object.fd;
+#endif
     return id;
 }
 
 static bool drmprime_drm_format(struct vo *vo, struct mp_image *src)
 {
+    bool format = false;
+#if HAVE_DRM
     struct priv *p = vo->priv;
     struct AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)src->planes[0];
     if (!desc)
-        return false;
+        return format;
 
     // Just check the very first layer/plane.
     p->drm_format = desc->layers[0].format;
     int object_index = desc->layers[0].planes[0].object_index;
     p->drm_modifier = desc->objects[object_index].format_modifier;
-    return true;
+    format = true;
+#endif
+    return format;
 }
 
 static void drmprime_dmabuf_importer(struct buffer *buf, struct mp_image *src,
                                      struct zwp_linux_buffer_params_v1 *params)
 {
+#if HAVE_DRM
     int layer_no, plane_no;
     int max_planes = 0;
     const AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)src->planes[0];
@@ -267,6 +277,7 @@ static void drmprime_dmabuf_importer(struct buffer *buf, struct mp_image *src,
                                            plane.pitch, modifier >> 32, modifier & 0xffffffff);
         }
     }
+#endif
 }
 
 static intptr_t surface_id(struct vo *vo, struct mp_image *src)
@@ -388,10 +399,6 @@ static void destroy_osd_buffers(struct vo *vo)
     if (!vo->wl)
         return;
 
-    // Remove any existing buffer before we destroy them.
-    wl_surface_attach(vo->wl->osd_surface, NULL, 0, 0);
-    wl_surface_commit(vo->wl->osd_surface);
-
     struct priv *p = vo->priv;
     struct osd_buffer *osd_buf, *tmp;
     wl_list_for_each_safe(osd_buf, tmp, &p->osd_buffer_list, link) {
@@ -510,8 +517,9 @@ static void resize(struct vo *vo)
 
     const int width = mp_rect_w(wl->geometry);
     const int height = mp_rect_h(wl->geometry);
+    vo_get_src_dst_rects(vo, &src, &dst, &p->screen_osd_res);
 
-    if (width == 0 || height == 0)
+    if (width == 0 || height == 0 || mp_rect_w(dst) == 0 || mp_rect_h(dst) == 0)
         return;
 
     vo_wayland_set_opaque_region(wl, false);
@@ -545,6 +553,7 @@ static void resize(struct vo *vo)
     vo->target_params->w = mp_rect_w(dst);
     vo->target_params->h = mp_rect_h(dst);
     vo->target_params->rotate = (vo->params->rotate % 90) * 90;
+    vo->target_params->vflip = vo->params->vflip;
     mp_mutex_unlock(&vo->params_mutex);
 }
 
@@ -649,11 +658,11 @@ static void flip_page(struct vo *vo)
 {
     struct vo_wayland_state *wl = vo->wl;
 
-    wl_surface_commit(wl->video_surface);
     wl_surface_commit(wl->osd_surface);
+    wl_surface_commit(wl->video_surface);
     wl_surface_commit(wl->surface);
 
-    if (!wl->opts->wl_disable_vsync)
+    if (wl->opts->wl_internal_vsync)
         vo_wayland_wait_frame(wl);
 
     if (wl->use_present)
@@ -676,6 +685,10 @@ static int query_format(struct vo *vo, int format)
 {
     return is_supported_fmt(format);
 }
+
+static const int32_t transform_enum_lut[4][2] = {
+    {0, 6}, {1, 5}, {2, 4}, {3, 7},
+};
 
 static int reconfig(struct vo *vo, struct mp_image *img)
 {
@@ -713,7 +726,8 @@ done:
     vo->target_params = &p->target_params;
     mp_mutex_unlock(&vo->params_mutex);
 
-    wl_surface_set_buffer_transform(vo->wl->video_surface, img->params.rotate / 90);
+    wl_surface_set_buffer_transform(vo->wl->video_surface,
+        transform_enum_lut[img->params.rotate / 90][!!img->params.vflip]);
 
     // Immediately destroy all buffers if params change.
     destroy_buffers(vo);
@@ -779,7 +793,7 @@ static int preinit(struct vo *vo)
     if (!p->ctx)
         goto err;
 
-    assert(p->ctx->ra);
+    mp_assert(p->ctx->ra);
 
     if (!vo->wl->dmabuf || !vo->wl->dmabuf_feedback) {
         MP_FATAL(vo->wl, "Compositor doesn't support the %s (ver. 4) protocol!\n",
@@ -866,8 +880,10 @@ err:
 const struct vo_driver video_out_dmabuf_wayland = {
     .description = "Wayland dmabuf video output",
     .name = "dmabuf-wayland",
-    .caps = VO_CAP_ROTATE90,
-    .frame_owner = true,
+    .caps = VO_CAP_ROTATE90 |
+            VO_CAP_FRAMEOWNER |
+            VO_CAP_VFLIP |
+            0x0,
     .preinit = preinit,
     .query_format = query_format,
     .reconfig2 = reconfig,

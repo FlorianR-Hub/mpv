@@ -200,16 +200,8 @@ mp.add_key_binding(nil, "select-vid", function ()
 end)
 
 local function format_time(t, duration)
-    local h = math.floor(t / (60 * 60))
-    t = t - (h * 60 * 60)
-    local m = math.floor(t / 60)
-    local s = t - (m * 60)
-
-    if duration >= 60 * 60 or h > 0 then
-        return string.format("%.2d:%.2d:%.2d", h, m, s)
-    end
-
-    return string.format("%.2d:%.2d", m, s)
+    local fmt = math.max(t, duration) >= 60 * 60 and "%H:%M:%S" or "%M:%S"
+    return mp.format_time(t, fmt)
 end
 
 mp.add_key_binding(nil, "select-chapter", function ()
@@ -230,7 +222,7 @@ mp.add_key_binding(nil, "select-chapter", function ()
     input.select({
         prompt = "Select a chapter:",
         items = chapters,
-        default_item = default_item + 1,
+        default_item = default_item > -1 and default_item + 1,
         submit = function (chapter)
             mp.set_property("chapter", chapter - 1)
         end,
@@ -248,7 +240,7 @@ mp.add_key_binding(nil, "select-edition", function ()
     local editions = {}
 
     for i, edition in ipairs(edition_list) do
-        editions[i] = edition.title or "Edition " .. (edition.id + 1)
+        editions[i] = edition.title or ("Edition " .. edition.id + 1)
     end
 
     input.select({
@@ -390,7 +382,7 @@ mp.add_key_binding(nil, "select-watch-history", function ()
     if not history_file then
         show_warning(mp.get_property_native("save-watch-history")
                      and error_message
-                     or "Enable --save-watch-history")
+                     or "Enable --save-watch-history to jump to recently played files.")
         return
     end
 
@@ -619,7 +611,7 @@ mp.add_key_binding(nil, "menu", function ()
         {"History", "script-binding select/select-watch-history", true},
         {"Watch later", "script-binding select/select-watch-later", true},
         {"Stats for nerds", "script-binding stats/display-page-1-toggle", true},
-        {"File info", "script-binding stats/display-page-5-toggle", true},
+        {"File info", "script-binding stats/display-page-5-toggle", mp.get_property("filename")},
         {"Help", "script-binding stats/display-page-4-toggle", true},
     }
 
@@ -636,8 +628,13 @@ mp.add_key_binding(nil, "menu", function ()
     input.select({
         prompt = "",
         items = labels,
+        keep_open = true,
         submit = function (i)
             mp.command(commands[i])
+
+            if not commands[i]:find("^script%-binding select/") then
+                input.terminate()
+            end
         end,
     })
 end)

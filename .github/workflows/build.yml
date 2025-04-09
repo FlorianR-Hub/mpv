@@ -62,7 +62,7 @@ jobs:
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y ccache g++-mingw-w64 gcc-multilib meson nasm ninja-build pkgconf ${{ matrix.wine }}
+          sudo apt-get install --no-install-recommends -y ccache g++-mingw-w64 gcc-multilib meson nasm ninja-build pkgconf ${{ matrix.wine }} wine
 
       - name: Install Meson Wraps
         run: |
@@ -165,6 +165,7 @@ jobs:
         id: build
         run: |
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -ne 'C:\Program Files\LLVM\bin' -and `
+                                                             $_ -ne 'C:\Program Files\CMake\bin' -and `
                                                              $_ -ne 'C:\Strawberry\c\bin' }) -join ';'
           $env:PATH += ';C:\Program Files\NASM'
           Import-Module "$env:VS\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
@@ -180,6 +181,7 @@ jobs:
         id: tests
         run: |
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -ne 'C:\Program Files\LLVM\bin' -and `
+                                                             $_ -ne 'C:\Program Files\CMake\bin' -and `
                                                              $_ -ne 'C:\Strawberry\c\bin' }) -join ';'
           $env:PATH += ';C:\Program Files\NASM'
           Import-Module "$env:VS\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
@@ -290,24 +292,25 @@ jobs:
       env:
         CC: "${{ matrix.config.cc }}"
         CXX: "${{ matrix.config.cxx }}"
+        CC_LD: "${{ matrix.config.ld }}"
+        CXX_LD: "${{ matrix.config.ld }}"
     strategy:
       matrix:
         config:
-        - {
-            cc: "gcc",
-            cxx: "g++",
-          }
-        - {
-            cc: "clang",
-            cxx: "clang++",
-          }
+          - cc: "gcc"
+            cxx: "g++"
+            args: "-Db_ndebug=true"
+          - cc: "clang"
+            cxx: "clang++"
+            ld: "lld"
+            args: "-Db_lto=true -Db_lto_mode=thin"
     steps:
       - uses: actions/checkout@v4
 
       - name: Build with meson
         id: build
         run: |
-          ./ci/build-tumbleweed.sh
+          ./ci/build-tumbleweed.sh ${{ matrix.config.args }}
 
       - name: Print meson log
         if: ${{ failure() && steps.build.outcome == 'failure' }}
@@ -406,10 +409,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Test in OpenBSD VM
-      uses: cross-platform-actions/action@v0.25.0
+      uses: cross-platform-actions/action@v0.27.0
       with:
         operating_system: openbsd
-        version: '7.5'
+        version: '7.6'
         run: |
             sudo pkg_add -U \
                 cmake \
@@ -451,10 +454,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Test in FreeBSD VM
-      uses: cross-platform-actions/action@v0.25.0
+      uses: cross-platform-actions/action@v0.27.0
       with:
         operating_system: freebsd
-        version: '14.1'
+        version: '14.2'
         run: |
             sudo pkg update
             sudo pkg install -y \
@@ -505,7 +508,6 @@ jobs:
       matrix:
         sys:
           - clang64
-          - mingw32
           - mingw64
           - ucrt64
     defaults:
@@ -524,8 +526,10 @@ jobs:
           update: true
           install: git
           pacboy: >-
+            angleproject:p
             ca-certificates:p
             cc:p
+            cppwinrt:p
             ffmpeg:p
             lcms2:p
             libarchive:p
@@ -539,16 +543,13 @@ jobs:
             ninja:p
             pkgconf:p
             python:p
+            rst2pdf:p
+            rubberband:p
             shaderc:p
             spirv-cross:p
             uchardet:p
             vapoursynth:p
             vulkan-devel:p
-
-      - name: Install dependencies
-        if: ${{ matrix.sys != 'mingw32' }}
-        run: |
-          pacboy --noconfirm -S {angleproject,cppwinrt,rst2pdf,rubberband}:p
 
       - name: Build with meson
         id: build

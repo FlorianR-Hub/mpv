@@ -297,9 +297,15 @@ done:
     return best_score;
 }
 
-bstr mp_guess_lang_from_filename(bstr name, int *lang_start)
+bstr mp_guess_lang_from_filename(bstr name, int *lang_start, enum track_flags *flags)
 {
     name = bstr_strip(bstr_strip_ext(name));
+
+    if (lang_start)
+        *lang_start = -1;
+
+    if (flags)
+        *flags = 0;
 
     if (name.len < 2)
         return (bstr){0};
@@ -318,10 +324,34 @@ bstr mp_guess_lang_from_filename(bstr name, int *lang_start)
         i--;
     }
 
+    enum track_flags *f = flags ? flags : &(enum track_flags){0};
+
     while (true) {
         while (i >= 0 && mp_isalpha(name.start[i])) {
             lang_length++;
             i--;
+        }
+
+        if (i >= 0 && lang_length >= 2 && name.start[i] == delimiter) {
+            bool matched = false;
+            static const char *const suffixes[] = { "sdh", "hi", "cc" };
+            bstr tag = { name.start + i + 1, lang_length };
+            for (int n = 0; n < MP_ARRAY_SIZE(suffixes); n++) {
+                if (!bstrcasecmp0(tag, suffixes[n])) {
+                    *f |= TRACK_HEARING_IMPAIRED;
+                    matched = true;
+                    break;
+                }
+            }
+            if (!bstrcasecmp0(tag, "forced")) {
+                *f |= TRACK_FORCED;
+                matched = true;
+            }
+            if (matched) {
+                lang_length = 0;
+                i -= (delimiter != '.') ? 2 : 1;
+                continue;
+            }
         }
 
         // According to

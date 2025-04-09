@@ -316,7 +316,7 @@ static int init(struct sd *sd)
     ctx->packer = mp_ass_packer_alloc(ctx);
 
     // Subtitles does not have any profile value, so put the converted type as a profile.
-    const char **desc = ctx->converter ? &sd->codec->codec_profile : &sd->codec->codec_desc;
+    const char *_Atomic *desc = ctx->converter ? &sd->codec->codec_profile : &sd->codec->codec_desc;
     switch (ctx->ass_track->track_type) {
     case TRACK_TYPE_ASS:
         *desc = "Advanced Sub Station Alpha";
@@ -476,17 +476,19 @@ static void decode(struct sd *sd, struct demux_packet *packet)
             };
             filter_and_add(sd, &pkt2);
         }
-        if (sub_duration == UNKNOWN_DURATION) {
-            for (int n = track->n_events - 2; n >= 0; n--) {
-                if (track->events[n].Duration == UNKNOWN_DURATION * 1000) {
-                    if (track->events[n].Start != track->events[n + 1].Start) {
-                        track->events[n].Duration = track->events[n + 1].Start -
-                                                    track->events[n].Start;
-                    } else {
-                        track->events[n].Duration = track->events[n + 1].Duration;
-                    }
+        for (int n = track->n_events - 1; n >= 0; n--) {
+            if (track->events[track->n_events - 1].Start == track->events[n].Start)
+                continue;
+            if (track->events[n].Duration == UNKNOWN_DURATION * 1000) {
+                if (track->events[n].Start < track->events[n + 1].Start) {
+                    track->events[n].Duration = track->events[n + 1].Start -
+                                                track->events[n].Start;
+                } else if (track->events[n].Start == track->events[n + 1].Start) {
+                    track->events[n].Duration = track->events[n + 1].Duration;
                 }
             }
+            if (n > 0 && track->events[n].Start != track->events[n - 1].Start)
+                break;
         }
     } else {
         // Note that for this packet format, libass has an internal mechanism
@@ -1028,7 +1030,7 @@ static int control(struct sd *sd, enum sd_ctrl cmd, void *arg)
         ctx->video_params = *(struct mp_image_params *)arg;
         return CONTROL_OK;
     case SD_CTRL_UPDATE_OPTS: {
-        int flags = (uintptr_t)arg;
+        uint64_t flags = *(uint64_t *)arg;
         if (flags & UPDATE_SUB_FILT) {
             filters_destroy(sd);
             filters_init(sd);
